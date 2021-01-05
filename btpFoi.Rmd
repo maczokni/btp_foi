@@ -1,0 +1,292 @@
+---
+title: "Reports of sexual offences to BTP"
+author: "Reka Solymosi"
+date: "3/11/2017"
+output:
+  word_document: default
+  html_document: default
+---
+
+In light of the increased publicity around reporting unwanted sexual behaviour on transport I wanted to see if pattern of reporting has changed over time. To do so, I submitted an FOI through the Administrative Data Research Network (ADRN) to the British Transport Police (BTP). This is an analysis of the resulting data. 
+
+#Change in reporting over time
+
+The main thing we want to look at is an increase in reporting over time. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(here)
+
+btpData <- read.csv(here("FOIResponse076-17Data.csv"))
+
+btpData$comDateTime <-  dmy_hm(btpData$Committed.Date.Time)
+btpData$recDate <-  dmy(btpData$Recorded.Date)
+
+perDay <- btpData %>%
+  group_by(recDate) %>%
+  summarise(n=n())
+
+```
+
+
+So a first glance at reporting over time:
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(perDay, aes(recDate, n)) + 
+  geom_line() + 
+  stat_smooth() + 
+  theme_bw() +
+  theme(text = element_text(size=rel(4)))  + 
+  labs(list( x = "Date", y = "Number of reports")) 
+```
+
+OK so looks like generally reporting is going up. This is in line with what we'd hope for after all the Report It To Stop It campaigning. 
+
+Is there a difference between different modes of reporting?
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+perDaySrc <- btpData %>%
+  group_by(recDate, Source) %>%
+  summarise(n=n())
+
+
+ggplot(perDaySrc, aes(recDate, n)) + 
+  geom_line() + 
+  stat_smooth() + 
+  theme_bw() +
+  theme(text = element_text(size=rel(4)))  + 
+  labs(list( x = "Date", y = "Number of reports")) +
+  facet_wrap(~Source)
+```
+
+OK so don't really see anything there. Unfortunately it looks like everything was recorded as 'Not Stated' pre-2016. 
+This means that the majority of the reports is logged as 'Not Stated': 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+btpData2 <- within(btpData, 
+                   Source <- factor(Source, 
+                                      levels=names(sort(table(Source), 
+                                                        decreasing=TRUE))))
+ggplot(btpData2, aes(Source)) + 
+  geom_bar() + 
+  labs(list( x = "Mode of reporting", y = "Number of reports")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), axis.title = element_text(size=14), axis.text=element_text(size=12))
+
+```
+
+The main message of RITSI was to report using the 61016 number, which would be recorded here as 'text message'. Let's look at this mode only, over time: 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+textRepsOnly <- perDaySrc[perDaySrc$Source=="Text",]
+ggplot(textRepsOnly, aes(recDate, n)) + 
+  geom_line() + 
+  stat_smooth() + 
+  theme_bw()
+```
+
+Okay so that's not very exciting either. Basically we get nothing interesting from mode of reporting. In fact in most categories we have very small numbers:
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+btpDataNotNotStated <- btpData[btpData$Source != 'Not Stated',]
+
+btpData2 <- within(btpDataNotNotStated, 
+                   Source <- factor(Source, 
+                                      levels=names(sort(table(Source), 
+                                                        decreasing=TRUE))))
+ggplot(btpData2, aes(Source)) + 
+  geom_bar() + 
+  labs(list( x = "Mode of reporting", y = "Number of reports")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), axis.title = element_text(size=14), axis.text=element_text(size=12))
+
+```
+
+So basically none of that is any good. 
+
+#Demographics
+
+Another bit of information we have is demongraphic of victim, like gender and age. 
+
+
+Is there a difference in the age of people who use different modes to report?
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+btpData$ageNum <- as.numeric(as.character(btpData$Age))
+
+btpData$Age <- ifelse(btpData$Age==1, NA, btpData$Age)
+
+ggplot(btpData, aes(x=Source, y=ageNum))+
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), text = element_text(size=rel(4))) + 
+  labs(list( x = "Mode of reporting", y = "Age"))
+```
+
+Nope, not really. Other police force looks a bit different, but that is only 3 reports. So no, no real difference in age between the different modes of reporting. 
+
+OK what about a difference in gender?
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+btpData2 <- btpData[btpData$Victim.Gender == "M" |btpData$Victim.Gender == "F", ]
+
+ggplot(btpData2, aes(Source)) + 
+  geom_bar(aes(fill = Victim.Gender), position = "fill")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), text = element_text(size=rel(4)))+ 
+  labs(list( x = "Mode of reporting", y = "Percent"))
+
+```
+
+Hmm not sure really. Let's ask a fisher exact test (bc small cell counts). 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+fisher.test(table(btpData2$Victim.Gender, btpData2$Source),simulate.p.value=TRUE,B=1e7)
+```
+
+Nope, nothing exciting here either. There is no real difference in terms of what mode of reporting is used between gender or age. 
+
+Let's look at difference between groups in reporting over time. 
+
+Starting with gender: 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+perDaySrc <- btpData2 %>%
+  group_by(recDate, Victim.Gender) %>%
+  summarise(n=n())
+
+
+ggplot(perDaySrc, aes(recDate, n)) + 
+  geom_line() + 
+  stat_smooth() + 
+  theme_bw() +
+  theme(text = element_text(size=rel(4)))  + 
+  labs(list( x = "Date", y = "Number of reports")) +
+  facet_wrap(~Victim.Gender)
+```
+
+Well it looks like there is an increase in women reporting, not so mich in men, but there are super low numbers of men reporting, so that might be what's going on. 
+
+What about by age?
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+btpData$ageCat <- NA
+btpData$ageCat <- ifelse(btpData$ageNum < 13, "under 13", btpData$ageCat)
+btpData$ageCat <- ifelse(btpData$ageNum >= 13 & btpData$ageNum < 16, "13 - 16", btpData$ageCat)
+btpData$ageCat <- ifelse(btpData$ageNum >= 16 & btpData$ageNum < 25, "16 - 25", btpData$ageCat)
+btpData$ageCat <- ifelse(btpData$ageNum >= 25 & btpData$ageNum < 35, "25-35", btpData$ageCat)
+btpData$ageCat <- ifelse(btpData$ageNum >= 35, "35 or over", btpData$ageCat)
+
+btpData$ageCat <- factor(btpData$ageCat, levels = c("under 13",
+                                                    "13 - 16",
+                                                    "16 - 25",
+                                                    "25-35",
+                                                    "35 or over"))
+
+perDaySrc <- btpData %>%
+  group_by(recDate, ageCat) %>%
+  summarise(n=n())
+
+
+ggplot(perDaySrc, aes(recDate, n)) + 
+  geom_line() + 
+  stat_smooth() + 
+  theme_bw() +
+  theme(text = element_text(size=rel(4)))  + 
+  labs(list( x = "Date", y = "Number of reports")) +
+  facet_wrap(~ageCat)
+```
+
+I mean we see more marked increase with more data. Again nothing extremely exciting. 
+
+#Type of offence
+
+Another possibility is that there is a difference between *what* is being reported?
+
+Categories included in the data are: 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+btpData$Crime.Desc <- as.character(btpData$Crime.Desc)
+unique(btpData$Crime.Desc)
+```
+
+I've aggregated these into some overarching groups: 
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+sexAssaultNoPenetration <- c("Sexual Assault On A Female Aged 13 And Over No Penetration",
+                                    "Sexual Assault On A Male Aged 13 And Over No Penetration",
+                                    "Causing A Male Person To Engage In Sexual Activity No Penetration (No Consent)",
+                              "Causing A Female Person To Engage In Sexual Activity No Penetration (No Consent)"
+                              )
+
+childSexOffence <- c("Sexual Assault On A Female Child Under 13 No Penetration",
+                     "Sexual Assault On A Male Child Under 13 No Penetration",
+                     "Causing Or Inciting S A Child Under 13 To Engage In Sexual Activity",
+                     "Causing Or Inciting S A Child Under 16 To Engage In Sexual Activity", 
+                     "Rape Of A Female Child Under 16", 
+                     "Rape Of A Male Child Under 16",
+                     "Rape Of A Female Child Under 13",
+                     "Abuse Of Children Through Prostitution & Pornography")
+
+sexAssaultPenetration <- c("Assault On A Female Aged Over 13 By Penetration",
+                            "Sexual Assault On A Male Aged 13 And Over By Penetration")
+
+rape <- c("Rape Of A Male Aged 16 And Over",
+          "Rape Of A Female Aged 16 And Over")
+
+sexGrooming <- c("Sexual Grooming - Female",
+                 "Sexual Grooming - Male")
+```
+
+Which results in the following:
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+btpData$category <- btpData$Crime.Desc
+btpData$category <- ifelse(btpData$Crime.Desc %in% sexAssaultNoPenetration, "Sexual Assault No Penetration", btpData$category)
+btpData$category <- ifelse(btpData$Crime.Desc %in% childSexOffence, "Sexual Assault Involving a Child", btpData$category)
+btpData$category <- ifelse(btpData$Crime.Desc %in% sexAssaultPenetration, "Sexual Assault Penetration", btpData$category)
+btpData$category <- ifelse(btpData$Crime.Desc %in% rape, "Rape", btpData$category)
+btpData$category <- ifelse(btpData$Crime.Desc %in% sexGrooming, "Sexual Grooming", btpData$category)
+
+btpData2 <- within(btpData, 
+                   category <- factor(category, 
+                                      levels=names(sort(table(category), 
+                                                        decreasing=TRUE))))
+
+ggplot(btpData2, aes(category)) + 
+  geom_bar()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+Yeah so clearly an unequal distribution here, so we can look but we are unlikely to find anything magical: 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+perDaySrc <- btpData %>%
+  group_by(recDate, category) %>%
+  summarise(n=n())
+
+
+ggplot(perDaySrc, aes(recDate, n)) + 
+  geom_line() + 
+  stat_smooth() + 
+  theme_bw() +
+  theme(text = element_text(size=rel(4)))  + 
+  labs(list( x = "Date", y = "Number of reports")) +
+  facet_wrap(~category)
+```
+
+In conclusion, this data tells us nothing really exciting unfortunately. I would have assumed that text reports go up after RITSI, but I guess this is not something we can check since we have all this "Not Stated" data for pre-RITSI. 
+
+

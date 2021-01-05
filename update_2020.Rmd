@@ -1,0 +1,153 @@
+---
+title: "BTP_FOI_v2"
+author: "Reka Solymosi"
+date: "15/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(readxl)
+library(janitor)
+library(tsibble)
+library(fable)
+
+#Read in and bind data
+
+foi_vol1 <- read_xlsx("FOI Response 076-17 Data.xlsx") %>% clean_names()
+foi_vol2 <- read_xlsx("FOI Response 01-FOI-20-90 Data.xlsx") %>% clean_names()
+
+foi_vol2 <- foi_vol2 %>% 
+  mutate(age = year(committed_date_time) - victim_year_of_birth, 
+         diff = as.period(interval(ymd_hms(committed_date_time),ymd(recorded_date))))
+
+foi_vol1 <- foi_vol1 %>% 
+  mutate(diff = as.period(interval(ymd_hms(committed_date_time),ymd(recorded_date))), 
+         age = as.numeric(as.character(age)))
+
+foi_vol2 <- foi_vol2 %>% rename("lu_rail_dlr" = "train_operating_company", 
+                                            "recorded_date" = "recorded_date", 
+                                            "committed_date_time" = "committed_date_time", 
+                                            "source" = "source", 
+                                            "crime_desc" = "crime_desc", 
+                                            "victim_gender" = "victim_gender", 
+                                            "age"  = "age" , 
+                                            "diff" = "diff")
+
+foi <- bind_rows(foi_vol1, foi_vol2)
+
+#Create variables
+
+foi <- foi %>% 
+  mutate(historic = ifelse(diff > period(days = 1), 1, 0),
+         futurecrimes = ifelse(diff < period(days = -1), 1, 0))
+
+
+```
+
+
+
+
+
+
+
+
+
+```{r, message=FALSE, warning=FALSE}
+foi %>%
+  group_by(recorded_date) %>%
+  summarise(n=n()) %>% 
+  ggplot(., aes(recorded_date, n)) + 
+  geom_line() + 
+  stat_smooth() + 
+  theme_bw() +
+  theme(text = element_text(size=rel(4)))  + 
+  labs(list( x = "Date", y = "Number of reports")) 
+```
+
+
+Group to week 
+
+
+```{r, message=FALSE, warning=FALSE}
+thing <- left_join(foi %>% filter(diff < period(days = 14) & diff >= -1 ) %>% 
+  group_by(yearweek(recorded_date)) %>%
+  summarise(n=n()) %>% 
+  rename(rec_weekyr = `yearweek(recorded_date)`), 
+  foi %>% filter(diff < period(days = 14) & diff >= -1 ) %>% 
+  group_by(yearweek(committed_date_time)) %>%
+  summarise(n=n()) %>% 
+  rename(com_weekyr = `yearweek(committed_date_time)`))
+  
+
+  ggplot() + 
+  geom_line(data = thing, mapping = aes(rec_weekyr, n), col = "#0571b0") + 
+  stat_smooth(data = thing, mapping = aes(rec_weekyr, n), col = "#0571b0") + 
+  geom_line(data = thing, mapping = aes(com_weekyr, n), col = "#ca0020", alpha = 0.8) + 
+  stat_smooth(data = thing, mapping = aes(com_weekyr, n), col = "#ca0020", alpha = 0.8) + 
+  theme_bw() +
+  theme(text = element_text(size=rel(4)))  + 
+  labs(list( x = "Week", y = "Number of reports/incidents")) 
+```
+
+
+
+Forecast 2020 from past data
+
+```{r}
+
+#use committed date, and exclude any where the report was made over 2 weeks after the offcene (totally arbitrary, should work on this) and also any future crimes over 1 day in the future (email back to ask what may be behind this)
+
+forecast_foi <- foi %>% filter(diff < period(days = 14) & diff >= -1 ) %>% 
+  count(date(committed_date_time), name = "crimes") %>% 
+  rename(committed_date_time = `date(committed_date_time)`) %>% 
+  as_tsibble(index = committed_date_time) %>% 
+  fill_gaps(crimes = 0) %>% 
+  mutate(com_weekyr = yearweek(committed_date_time)) %>% 
+  as_tibble() %>% 
+  group_by(com_weekyr) %>%
+  summarise(
+    crimes = sum(crimes), 
+    days_in_week = length(unique(committed_date_time))
+  ) %>% 
+  ungroup() %>% 
+  # remove incomplete weeks
+  filter(days_in_week == 7)
+
+
+crime_models <- forecast_foi %>% 
+    # use data from before the UK lockdown on March 23rd 2020
+    filter(com_weekyr < ymd("2020-03-23")) %>% 
+  as_tsibble(index = com_weekyr) %>% 
+    model(arima = ARIMA(crimes ~ trend() + season() ))
+
+forecast_data <- expand.grid(
+  date = seq.Date(
+    ymd("2020-03-23"), 
+    ymd("2020-03-23") + 
+      weeks(as.integer(difftime(now(), ymd("2020-03-23"), units = "weeks")) + 1), 
+    by = "days"
+  ),
+  stringsAsFactors = FALSE
+) %>% 
+  mutate(
+    week = yearweek(date)
+  ) %>% 
+  group_by(week) %>%
+  count() %>% 
+  ungroup() %>%
+  as_tsibble(index = week)
+
+# generate forecasts
+crime_forecasts <- forecast(
+  filter(crime_models), 
+  filter(forecast_data)
+)
+
+```
+
+
